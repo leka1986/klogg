@@ -61,7 +61,6 @@ bool generateDataFiles( QTemporaryFile& file )
 
     return true;
 }
-
 } // namespace
 
 struct CrawlerWidgetPrivate {
@@ -84,6 +83,27 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
     LinesCount getLogFilteredNbLines()
     {
         return crawler->logFilteredData_->getNbLine();
+    }
+
+    LinesCount getTopViewNbLines()
+    {
+        return crawler->logMainViewData_->getNbLine();
+    }
+
+    QString getTopViewLine( LineNumber line )
+    {
+        return crawler->logMainViewData_->getLineString( line );
+    }
+
+    LineNumber getTopViewSourceLine( LineNumber line )
+    {
+        return crawler->logMainViewData_->getSourceLineNumber( line );
+    }
+
+    void setTopFilter( const QString& pattern )
+    {
+        crawler->logMainViewData_->setTopFilter(
+            RegularExpressionPattern{ pattern, false, true, false, false } );
     }
 
     void selectAllInMainView()
@@ -133,42 +153,6 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
             QTest::mouseClick( crawler->booleanButton_, Qt::LeftButton );
             QTest::qWait( 100 );
         }
-    }
-
-    void enableFilteredOnly()
-    {
-        if ( !crawler->filteredOnlyButton_->isChecked() ) {
-            QTest::mouseClick( crawler->filteredOnlyButton_, Qt::LeftButton );
-            QTest::qWait( 100 );
-        }
-    }
-
-    void disableFilteredOnly()
-    {
-        if ( crawler->filteredOnlyButton_->isChecked() ) {
-            QTest::mouseClick( crawler->filteredOnlyButton_, Qt::LeftButton );
-            QTest::qWait( 100 );
-        }
-    }
-
-    bool isFilteredOnlyEnabled() const
-    {
-        return crawler->filteredOnlyButton_->isChecked();
-    }
-
-    bool isMainViewHidden() const
-    {
-        return crawler->logMainView_->isHidden();
-    }
-
-    QString viewContext() const
-    {
-        return crawler->doGetViewContext()->toString();
-    }
-
-    void restoreViewContext( const QString& context )
-    {
-        crawler->doSetViewContext( context );
     }
 
     void runSearch()
@@ -303,9 +287,9 @@ SCENARIO( "Crawler widget search", "[ui]" )
     }
 }
 
-SCENARIO( "Crawler widget filtered-only view", "[ui]" )
+SCENARIO( "Top filters are independent from bottom searches", "[ui]" )
 {
-    QTemporaryFile file{ "crawler_filtered_only_test_XXXXXX" };
+    QTemporaryFile file{ "crawler_top_filter_test_XXXXXX" };
     REQUIRE( generateDataFiles( file ) );
 
     Session session;
@@ -315,26 +299,18 @@ SCENARIO( "Crawler widget filtered-only view", "[ui]" )
 
     waitUiState( [ & ]() { return crawlerVisitor.getLogNbLines().get() == SL_NB_LINES; } );
     waitUiState( [ & ]() { return crawlerVisitor.isLoadingFinished(); } );
-    crawlerVisitor.render();
 
-    REQUIRE_FALSE( crawlerVisitor.isFilteredOnlyEnabled() );
-    REQUIRE_FALSE( crawlerVisitor.isMainViewHidden() );
+    crawlerVisitor.setTopFilter( "line 00000[0-4]" );
 
-    crawlerVisitor.enableFilteredOnly();
+    waitUiState( [ & ]() { return crawlerVisitor.getTopViewNbLines().get() == 95; } );
+    REQUIRE( crawlerVisitor.getTopViewSourceLine( 0_lnum ) == 5_lnum );
+    REQUIRE( crawlerVisitor.getTopViewLine( 0_lnum ).contains( "line 000005" ) );
 
-    REQUIRE( crawlerVisitor.isFilteredOnlyEnabled() );
-    REQUIRE( crawlerVisitor.isMainViewHidden() );
+    crawlerVisitor.setSearchPattern( "line" );
+    crawlerVisitor.runSearch();
 
-    const auto savedContext = crawlerVisitor.viewContext();
-    REQUIRE( savedContext.contains( "\"FO\":true" ) );
-
-    crawlerVisitor.disableFilteredOnly();
-
-    REQUIRE_FALSE( crawlerVisitor.isFilteredOnlyEnabled() );
-    REQUIRE_FALSE( crawlerVisitor.isMainViewHidden() );
-
-    crawlerVisitor.restoreViewContext( savedContext );
-
-    REQUIRE( crawlerVisitor.isFilteredOnlyEnabled() );
-    REQUIRE( crawlerVisitor.isMainViewHidden() );
+    waitUiState( [ & ]() {
+        return crawlerVisitor.getLogFilteredNbLines().get() == SL_NB_LINES;
+    } );
+    REQUIRE( crawlerVisitor.getTopViewNbLines().get() == 95 );
 }
