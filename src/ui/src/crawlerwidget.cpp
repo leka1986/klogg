@@ -90,7 +90,7 @@ public:
     // Construct from the value passsed
     CrawlerWidgetContext( QList<int> sizes, bool ignoreCase, bool autoRefresh, bool followFile,
                           bool useRegexp, bool inverseRegexp, bool useBooleanCombination,
-                          QList<LineNumber> markedLines )
+                          bool filteredOnly, QList<LineNumber> markedLines )
         : sizes_( sizes )
         , ignoreCase_( ignoreCase )
         , autoRefresh_( autoRefresh )
@@ -98,6 +98,7 @@ public:
         , useRegexp_( useRegexp )
         , inverseRegexp_( inverseRegexp )
         , useBooleanCombination_( useBooleanCombination )
+        , filteredOnly_( filteredOnly )
     {
         std::transform( markedLines.cbegin(), markedLines.cend(), std::back_inserter( marks_ ),
                         []( const auto& m ) { return m.get(); } );
@@ -136,6 +137,10 @@ public:
     {
         return useBooleanCombination_;
     }
+    bool filteredOnly() const
+    {
+        return filteredOnly_;
+    }
 
     QList<LineNumber::UnderlyingType> marks() const
     {
@@ -155,6 +160,7 @@ private:
     bool useRegexp_;
     bool inverseRegexp_;
     bool useBooleanCombination_;
+    bool filteredOnly_;
 
     QList<LineNumber::UnderlyingType> marks_;
 };
@@ -175,7 +181,7 @@ LineNumber CrawlerWidget::getTopLine() const
 
 QString CrawlerWidget::getSelectedText() const
 {
-    if ( filteredView_->hasFocus() )
+    if ( filteredOnlyButton_->isChecked() || filteredView_->hasFocus() )
         return filteredView_->getSelectedText();
     else
         return logMainView_->getSelectedText();
@@ -183,7 +189,7 @@ QString CrawlerWidget::getSelectedText() const
 
 bool CrawlerWidget::isPartialSelection() const
 {
-    if ( filteredView_->hasFocus() )
+    if ( filteredOnlyButton_->isChecked() || filteredView_->hasFocus() )
         return filteredView_->isPartialSelection();
     else
         return logMainView_->isPartialSelection();
@@ -340,11 +346,13 @@ void CrawlerWidget::doSetViewContext( const QString& view_context )
 
     const auto context = CrawlerWidgetContext{ view_context };
 
-    setSizes( context.sizes() );
+    normalSplitterSizes_ = context.sizes();
+    setSizes( normalSplitterSizes_ );
     matchCaseButton_->setChecked( !context.ignoreCase() );
     useRegexpButton_->setChecked( context.useRegexp() );
     inverseButton_->setChecked( context.inverseRegexp() );
     booleanButton_->setChecked( context.useBooleanCombination() );
+    filteredOnlyButton_->setChecked( context.filteredOnly() );
 
     searchRefreshButton_->setChecked( context.autoRefresh() );
     // Manually call the handler as it is not called when changing the state programmatically
@@ -360,10 +368,13 @@ void CrawlerWidget::doSetViewContext( const QString& view_context )
 
 std::shared_ptr<const ViewContextInterface> CrawlerWidget::doGetViewContext() const
 {
+    const auto splitterSizes
+        = filteredOnlyButton_->isChecked() ? normalSplitterSizes_ : sizes();
     auto context = std::make_shared<const CrawlerWidgetContext>(
-        sizes(), ( !matchCaseButton_->isChecked() ), searchRefreshButton_->isChecked(),
+        splitterSizes, ( !matchCaseButton_->isChecked() ), searchRefreshButton_->isChecked(),
         logMainView_->isFollowEnabled(), useRegexpButton_->isChecked(), inverseButton_->isChecked(),
-        booleanButton_->isChecked(), logFilteredData_->getMarks() );
+        booleanButton_->isChecked(), filteredOnlyButton_->isChecked(),
+        logFilteredData_->getMarks() );
 
     return static_cast<std::shared_ptr<const ViewContextInterface>>( context );
 }
@@ -728,7 +739,10 @@ void CrawlerWidget::loadingFinishedHandler( LoadingStatus status )
         for ( const auto& m : savedMarkedLines_ ) {
             logFilteredData_->addMark( m );
         }
-        logMainView_->setFocus();
+        if ( filteredOnlyButton_->isChecked() )
+            filteredView_->setFocus();
+        else
+            logMainView_->setFocus();
     }
 
     loadingInProgress_ = false;
@@ -770,8 +784,9 @@ AbstractLogView* CrawlerWidget::activeView() const
         return view;
     }
     else {
-        LOG_WARNING << "No active view, defaulting to logMainView";
-        return logMainView_;
+        LOG_WARNING << "No active view, defaulting to visible log view";
+        return filteredOnlyButton_->isChecked() ? static_cast<AbstractLogView*>( filteredView_ )
+                                                : static_cast<AbstractLogView*>( logMainView_ );
     }
 }
 
@@ -837,6 +852,20 @@ void CrawlerWidget::changeFilteredViewVisibility( int index )
     if ( logFilteredData_->getNbLine() > 0_lcount ) {
         const auto lineIndex = logFilteredData_->getLineIndexNumber( currentLineNumber_ );
         filteredView_->selectAndDisplayLine( lineIndex );
+    }
+}
+
+void CrawlerWidget::setFilteredOnly( bool filteredOnly )
+{
+    if ( filteredOnly ) {
+        normalSplitterSizes_ = sizes();
+        logMainView_->hide();
+        filteredView_->setFocus();
+    }
+    else {
+        logMainView_->show();
+        setSizes( normalSplitterSizes_ );
+        logMainView_->setFocus();
     }
 }
 
@@ -1074,6 +1103,14 @@ void CrawlerWidget::setup()
     searchRefreshButton_->setFocusPolicy( Qt::NoFocus );
     searchRefreshButton_->setContentsMargins( 2, 2, 2, 2 );
 
+    filteredOnlyButton_ = new QToolButton();
+    filteredOnlyButton_->setText( tr( "Filtered only" ) );
+    filteredOnlyButton_->setToolTip(
+        tr( "Hide the unfiltered view and expand the filtered results" ) );
+    filteredOnlyButton_->setCheckable( true );
+    filteredOnlyButton_->setFocusPolicy( Qt::NoFocus );
+    filteredOnlyButton_->setContentsMargins( 2, 2, 2, 2 );
+
     // Construct the Search line
     searchLineCompleter_ = new QCompleter( savedSearches_->recentSearches(), this );
     searchLineEdit_ = new QComboBox;
@@ -1128,6 +1165,7 @@ void CrawlerWidget::setup()
     searchLineLayout->setContentsMargins( 2, 2, 2, 2 );
 
     searchLineLayout->addWidget( visibilityBox_ );
+    searchLineLayout->addWidget( filteredOnlyButton_ );
     searchLineLayout->addWidget( matchCaseButton_ );
     searchLineLayout->addWidget( useRegexpButton_ );
     searchLineLayout->addWidget( inverseButton_ );
@@ -1172,6 +1210,7 @@ void CrawlerWidget::setup()
 
     // Default splitter position (usually overridden by the config file)
     setSizes( config.splitterSizes() );
+    normalSplitterSizes_ = sizes();
 
     registerShortcuts();
     loadIcons();
@@ -1202,6 +1241,9 @@ void CrawlerWidget::setup()
 
     connect( visibilityBox_, QOverload<int>::of( &QComboBox::currentIndexChanged ), this,
              &CrawlerWidget::changeFilteredViewVisibility );
+
+    connect( filteredOnlyButton_, &QToolButton::toggled, this,
+             &CrawlerWidget::setFilteredOnly );
 
     connect( logMainView_, &LogMainView::newSelection,
              [ this ]( auto ) { logMainView_->update(); } );
@@ -1333,7 +1375,8 @@ void CrawlerWidget::saveSplitterSizes() const
 {
     LOG_INFO << "Saving default splitter size";
     auto& splitterConfig = Configuration::get();
-    splitterConfig.setSplitterSizes( sizes() );
+    splitterConfig.setSplitterSizes(
+        filteredOnlyButton_->isChecked() ? normalSplitterSizes_ : sizes() );
     splitterConfig.save();
 }
 
@@ -1723,6 +1766,10 @@ void CrawlerWidget::updateEncoding()
 // Change the respective size of the two views
 void CrawlerWidget::changeTopViewSize( int32_t delta )
 {
+    if ( filteredOnlyButton_->isChecked() ) {
+        return;
+    }
+
     int min, max;
     getRange( 1, &min, &max );
     LOG_DEBUG << "CrawlerWidget::changeTopViewSize " << sizes().at( 0 ) << " " << min << " " << max;
@@ -1865,6 +1912,7 @@ void CrawlerWidgetContext::loadFromString( const QString& string )
     }
 
     useRegexp_ = Configuration::get().mainRegexpType() == SearchRegexpType::ExtendedRegexp;
+    filteredOnly_ = false;
 }
 
 void CrawlerWidgetContext::loadFromJson( const QString& json )
@@ -1902,6 +1950,13 @@ void CrawlerWidgetContext::loadFromJson( const QString& json )
         useBooleanCombination_ = false;
     }
 
+    if ( properties.contains( "FO" ) ) {
+        filteredOnly_ = properties.value( "FO" ).toBool();
+    }
+    else {
+        filteredOnly_ = false;
+    }
+
     if ( properties.contains( "M" ) ) {
         const auto marks = properties.value( "M" ).toList();
         for ( const auto& m : marks ) {
@@ -1929,6 +1984,7 @@ QString CrawlerWidgetContext::toString() const
     properies[ "RE" ] = useRegexp_;
     properies[ "IR" ] = inverseRegexp_;
     properies[ "BC" ] = useBooleanCombination_;
+    properies[ "FO" ] = filteredOnly_;
     properies[ "M" ] = toVariantList( marks_ );
 
     return QJsonDocument::fromVariant( properies ).toJson( QJsonDocument::Compact );

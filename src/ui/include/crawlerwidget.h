@@ -233,6 +233,9 @@ class CrawlerWidget : public QSplitter,
     // Called when the user change the visibility combobox
     void changeFilteredViewVisibility( int index );
 
+    // Show only the filtered view, hiding the unfiltered top view
+    void setFilteredOnly( bool filteredOnly );
+
     // Called when the user add the string to the search
     void addToSearch( const QString& string );
 
@@ -394,6 +397,9 @@ class CrawlerWidget : public QSplitter,
     QToolButton* inverseButton_;
     QToolButton* booleanButton_;
     QToolButton* searchRefreshButton_;
+    QToolButton* filteredOnlyButton_;
+
+    QList<int> normalSplitterSizes_;
 
     std::map<QString, QShortcut*> shortcuts_;
 

@@ -135,6 +135,42 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
         }
     }
 
+    void enableFilteredOnly()
+    {
+        if ( !crawler->filteredOnlyButton_->isChecked() ) {
+            QTest::mouseClick( crawler->filteredOnlyButton_, Qt::LeftButton );
+            QTest::qWait( 100 );
+        }
+    }
+
+    void disableFilteredOnly()
+    {
+        if ( crawler->filteredOnlyButton_->isChecked() ) {
+            QTest::mouseClick( crawler->filteredOnlyButton_, Qt::LeftButton );
+            QTest::qWait( 100 );
+        }
+    }
+
+    bool isFilteredOnlyEnabled() const
+    {
+        return crawler->filteredOnlyButton_->isChecked();
+    }
+
+    bool isMainViewHidden() const
+    {
+        return crawler->logMainView_->isHidden();
+    }
+
+    QString viewContext() const
+    {
+        return crawler->doGetViewContext()->toString();
+    }
+
+    void restoreViewContext( const QString& context )
+    {
+        crawler->doSetViewContext( context );
+    }
+
     void runSearch()
     {
         QTest::mouseClick( crawler->searchButton_, Qt::LeftButton );
@@ -265,4 +301,40 @@ SCENARIO( "Crawler widget search", "[ui]" )
             }
         }
     }
+}
+
+SCENARIO( "Crawler widget filtered-only view", "[ui]" )
+{
+    QTemporaryFile file{ "crawler_filtered_only_test_XXXXXX" };
+    REQUIRE( generateDataFiles( file ) );
+
+    Session session;
+    CrawlerWidgetVisitor crawlerVisitor;
+    crawlerVisitor.crawler.reset( static_cast<CrawlerWidget*>(
+        session.open( file.fileName(), []() { return new CrawlerWidget(); } ) ) );
+
+    waitUiState( [ & ]() { return crawlerVisitor.getLogNbLines().get() == SL_NB_LINES; } );
+    waitUiState( [ & ]() { return crawlerVisitor.isLoadingFinished(); } );
+    crawlerVisitor.render();
+
+    REQUIRE_FALSE( crawlerVisitor.isFilteredOnlyEnabled() );
+    REQUIRE_FALSE( crawlerVisitor.isMainViewHidden() );
+
+    crawlerVisitor.enableFilteredOnly();
+
+    REQUIRE( crawlerVisitor.isFilteredOnlyEnabled() );
+    REQUIRE( crawlerVisitor.isMainViewHidden() );
+
+    const auto savedContext = crawlerVisitor.viewContext();
+    REQUIRE( savedContext.contains( "\"FO\":true" ) );
+
+    crawlerVisitor.disableFilteredOnly();
+
+    REQUIRE_FALSE( crawlerVisitor.isFilteredOnlyEnabled() );
+    REQUIRE_FALSE( crawlerVisitor.isMainViewHidden() );
+
+    crawlerVisitor.restoreViewContext( savedContext );
+
+    REQUIRE( crawlerVisitor.isFilteredOnlyEnabled() );
+    REQUIRE( crawlerVisitor.isMainViewHidden() );
 }
